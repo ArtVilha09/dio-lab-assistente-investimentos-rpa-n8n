@@ -1,0 +1,409 @@
+{
+  "name": "Assistente de Investimento - DIO",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -64,
+        -288
+      ],
+      "id": "46cd6f0a-af4c-4b90-887b-97590fbac2e0",
+      "name": "Webhook",
+      "webhookId": "5a0bb71a-5647-4364-9d01-b203c4d4b997"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2048,
+        -336
+      ],
+      "id": "6ea6e818-74a7-4300-801a-6bbb3bfc8d0e",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        160,
+        -216
+      ],
+      "id": "2b7092b9-0a56-4061-b343-e53a5b8e6e0d",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n // Pega o CSV como texto vindo do HTTP Request\nconst csvRaw = $json.data ?? $json.body ?? $json;\nconst text = (typeof csvRaw === \"string\") ? csvRaw :\n  JSON.stringify(csvRaw);\n\nconst lines = text.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\nconst headers = lines[0].split(\",\").map(h => h.trim());\n\nconst investimentos = lines.slice(1).map(line => {\n  const cols = line.split(\",\").map(c => c.trim());\n  const obj = {};\n  headers.forEach((h, i) => obj[h] = cols[i] ?? \"\");\n\n  // normaliza mínimo para número\n  obj.minimo = Number(String(obj.minimo).replace(/[^\\d.]/g, \"\")) || 0;\n\n  return obj;\n});\n\nreturn [{ json: { investimentos } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        -216
+      ],
+      "id": "a54a20f8-d55b-4cb4-a33a-f51bed17bdc5",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        608,
+        -288
+      ],
+      "id": "d6ae3769-d31a-4166-892b-2ba6aebf9e7d",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/**\n * ASSISTENTE DE INVESTIMENTOS - DIO\n * Cruza clientes com investimentos e\n * gera mensagens personalizadas.\n */\n\n// ======================================\n// 1. RECEBER DADOS DO MERGE\n// ======================================\n\nconst entradas = $input.all().map(item => item.json);\n\nlet clientes = [];\nlet investimentos = [];\n\nfor (const entrada of entradas) {\n  const dados = entrada.body ?? entrada;\n\n  if (Array.isArray(dados.clientes)) {\n    clientes = dados.clientes;\n  }\n\n  if (Array.isArray(entrada.investimentos)) {\n    investimentos = entrada.investimentos;\n  }\n\n  if (Array.isArray(dados.investimentos)) {\n    investimentos = dados.investimentos;\n  }\n}\n\n// ======================================\n// 2. FUNÇÕES AUXILIARES\n// ======================================\n\n// Converte valores como R$ 12.500,00\nfunction paraNumero(valor) {\n  if (typeof valor === \"number\") {\n    return valor;\n  }\n\n  const texto = String(valor ?? \"\")\n    .replace(/[^\\d,.-]/g, \"\");\n\n  const normalizado = texto.includes(\",\")\n    ? texto.replace(/\\./g, \"\").replace(\",\", \".\")\n    : texto;\n\n  return Number(normalizado) || 0;\n}\n\n// Formata valores em reais\nfunction brl(valor) {\n  return Number(valor).toLocaleString(\"pt-BR\", {\n    style: \"currency\",\n    currency: \"BRL\"\n  });\n}\n\n// Escolhe uma mensagem aleatória\nfunction pick(lista) {\n  return lista[Math.floor(Math.random() * lista.length)];\n}\n\n// ======================================\n// 3. VALIDAR DADOS\n// ======================================\n\nif (!clientes.length) {\n  throw new Error(\"Nenhum cliente encontrado no Merge.\");\n}\n\nif (!investimentos.length) {\n  throw new Error(\"Nenhum investimento encontrado no Merge.\");\n}\n\n// ======================================\n// 4. PROCESSAR CLIENTES\n// ======================================\n\nconst resultados = clientes.map(c => {\n\n  const nome = c.nome ?? \"Cliente\";\n  const email = c.email ?? \"\";\n  const perfil = String(c.perfil ?? \"\").trim();\n\n  const saldoNum = paraNumero(c.saldo);\n  const saldoTexto = brl(saldoNum);\n\n  // Busca investimentos do mesmo perfil\n  const opcoesPerfil = investimentos.filter(i =>\n    String(i.perfil ?? \"\").trim().toLowerCase() ===\n    perfil.toLowerCase()\n  );\n\n  // Busca opções compatíveis com o saldo\n  const opcoesValidas = opcoesPerfil\n    .filter(i => saldoNum >= paraNumero(i.minimo))\n    .sort((a, b) =>\n      paraNumero(b.minimo) - paraNumero(a.minimo)\n    );\n\n  // Prioriza a opção de maior mínimo\n  // que o saldo consegue atender\n  let escolhido = opcoesValidas[0];\n\n  // Se não puder investir, usa a opção\n  // de menor valor para orientar\n  if (!escolhido && opcoesPerfil.length) {\n    escolhido = [...opcoesPerfil].sort((a, b) =>\n      paraNumero(a.minimo) - paraNumero(b.minimo)\n    )[0];\n  }\n\n  let motivo = \"\";\n  let mensagens = [];\n\n  // ====================================\n  // 5. GERAR MENSAGENS PERSONALIZADAS\n  // ====================================\n\n  if (!escolhido) {\n\n    motivo = \"sem_opcao\";\n\n    mensagens = [\n      `Olá ${nome}! Ainda não encontramos investimentos compatíveis com seu perfil ${perfil}.`,\n\n      `Oi ${nome}! No momento, não temos uma opção cadastrada para o perfil ${perfil}.`,\n\n      `${nome}, vamos analisar novas alternativas para seu perfil de investidor ${perfil}.`\n    ];\n\n  } else {\n\n    const minimo = paraNumero(escolhido.minimo);\n    const minimoTexto = brl(minimo);\n    const produto = escolhido.produto;\n    const rentabilidade = escolhido.rentabilidade;\n\n    if (saldoNum >= minimo) {\n\n      motivo = \"saldo_ok\";\n\n      mensagens = [\n\n        `Olá ${nome}! Pelo seu perfil (${perfil}), uma boa opção é **${produto}** (mínimo ${minimoTexto}). Com seu saldo atual (${saldoTexto}), você já consegue investir. Rentabilidade: ${rentabilidade}.`,\n\n        `Oi ${nome}! Recomendação para perfil ${perfil}: **${produto}** (mínimo ${minimoTexto}). Seu saldo (${saldoTexto}) já atende o mínimo. Rentabilidade: ${rentabilidade}.`,\n\n        `${nome}, indo direto ao ponto: para o perfil ${perfil}, **${produto}** (mínimo ${minimoTexto}). Você tem ${saldoTexto}, então dá pra aplicar. Rentabilidade: ${rentabilidade}.`\n\n      ];\n\n    } else {\n\n      motivo = \"saldo_insuficiente\";\n\n      const faltante = minimo - saldoNum;\n\n      mensagens = [\n\n        `Olá ${nome}! Para seu perfil ${perfil}, encontramos **${produto}**, que exige investimento mínimo de ${minimoTexto}. Atualmente você possui ${saldoTexto}, faltando ${brl(faltante)} para atingir o mínimo.`,\n\n        `Oi ${nome}! Uma alternativa para o perfil ${perfil} é **${produto}**. O investimento mínimo é ${minimoTexto}. Você precisaria adicionar ${brl(faltante)} ao seu saldo atual.`,\n\n        `${nome}, considerando seu perfil ${perfil}, o produto **${produto}** pode ser uma alternativa. Seu saldo atual é ${saldoTexto} e o mínimo necessário é ${minimoTexto}.`\n\n      ];\n    }\n  }\n\n  // ====================================\n  // 6. RETORNAR RESULTADO DO CLIENTE\n  // ====================================\n\n  return {\n    nome,\n    email,\n    perfil,\n    saldo_texto: c.saldo,\n    saldo_num: saldoNum,\n    recomendacao: escolhido ?? null,\n    motivo,\n    mensagens,\n    mensagem_escolhida: pick(mensagens)\n  };\n\n});\n\n// ======================================\n// 7. RETORNO FINAL PARA O N8N\n// ======================================\n\nreturn [{\n  json: {\n    ok: true,\n    total_clientes: resultados.length,\n    total_investimentos: investimentos.length,\n    resultados\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        -288
+      ],
+      "id": "eb3a9b09-5db6-47f5-92c2-e16958047acb",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-6-luna",
+          "mode": "list",
+          "cachedResultName": "GPT-6-LUNA"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Você é um assistente especializado em atendimento ao cliente e investimentos.\n\nSua tarefa é criar um e-mail profissional, amigável e personalizado, apresentando uma sugestão de investimento de acordo com o perfil e o saldo do cliente.\n\n**Dados do cliente:**\n- Nome: {{ $json.resultados.nome }}\n- Perfil de investidor: {{ $json.resultados.perfil }}\n- Saldo disponível: {{ $json.resultados.saldo_texto }}\n- Recomendação: {{ $json.resultados.mensagem_escolhida }}\n\n**Instruções:**\n1. Cumprimente o cliente pelo primeiro nome.\n2. Apresente a recomendação de maneira clara e natural.\n3. Explique brevemente por que o investimento pode ser adequado ao perfil informado.\n4. Mencione o investimento mínimo e a rentabilidade informada, sem prometer ganhos.\n5. Finalize convidando o cliente a entrar em contato para saber mais.\n6. Utilize linguagem profissional, simples e objetiva.\n7. Não invente informações ou produtos.\n\nRetorne somente o corpo do e-mail, sem assunto, explicações adicionais ou formatação Markdown.\n\nFinalize com:\n\nAtenciosamente,\nEquipe de Investimentos"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1280,
+        -288
+      ],
+      "id": "8a4e93bb-4b75-4a5b-a852-3e4ac24a2329",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "bMjz2FADnMpDcnM7",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "resultados",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        -288
+      ],
+      "id": "ff02626b-ff66-40bb-baaa-0397072645c8",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code in JavaScript1').item.json.resultados[0].email }}",
+        "subject": "Investimentos",
+        "message": "={{ $json.output[0].content[0].text }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1856,
+        -336
+      ],
+      "id": "9bbc5066-a46a-4be0-84a0-b85db9c94411",
+      "name": "Send a message",
+      "webhookId": "9371e701-2739-4024-b716-6e69e2bce6bb",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "QgwYDswWeveIURUR",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7ceb8664-f334-4621-9dc4-23741a057d15",
+              "leftValue": "={{ $('Split Out').item.json.resultados.email }}",
+              "rightValue": "@gmail",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1632,
+        -288
+      ],
+      "id": "5d7bbb98-0349-45ed-a509-d52df7592ba1",
+      "name": "If"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "aulacurso-n8n.m8apnp.easypanel.host",
+            "user-agent": "python-requests/2.32.4",
+            "content-length": "1047",
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "content-type": "application/json",
+            "x-forwarded-for": "136.71.154.160",
+            "x-forwarded-host": "aulacurso-n8n.m8apnp.easypanel.host",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "8fd2ed68bdfe",
+            "x-real-ip": "136.71.154.160"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "clientes": [
+              {
+                "nome": "Ana Silva",
+                "email": "ana@email.com",
+                "saldo": "R$ 12.500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Bruno Lima",
+                "email": "bruno@email.com",
+                "saldo": "R$ 3.200,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Carla Souza",
+                "email": "carla@email.com",
+                "saldo": "R$ 28.900,00",
+                "perfil": "Arrojado"
+              },
+              {
+                "nome": "Daniel Oliveira",
+                "email": "daniel@email.com",
+                "saldo": "R$ 850,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Elena Rodrigues",
+                "email": "elena@email.com",
+                "saldo": "R$ 45.000,00",
+                "perfil": "Arrojado"
+              },
+              {
+                "nome": "Felipe Santos",
+                "email": "felipe@email.com",
+                "saldo": "R$ 7.800,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Gabriela Costa",
+                "email": "gabriela@email.com",
+                "saldo": "R$ 1.500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Henrique Alves",
+                "email": "henrique@email.com",
+                "saldo": "R$ 22.300,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Isabela Martins",
+                "email": "isabela@email.com",
+                "saldo": "R$ 500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "João Pereira",
+                "email": "joao@email.com",
+                "saldo": "R$ 15.000,00",
+                "perfil": "Arrojado"
+              }
+            ]
+          },
+          "webhookUrl": "https://aulacurso-n8n.m8apnp.easypanel.host/webhook-test/clientes",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9a9711c8-8220-432a-88a3-5042bc94736a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "046c62b23d607bc992e60685aafae2b9737f0873eeae868cead62b8b42882e59"
+  },
+  "id": "hpQehoBpRPNEDIE6",
+  "tags": []
+}
